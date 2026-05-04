@@ -28,6 +28,10 @@ async function createUserProfile(user, name) {
       name: name || user.displayName || "CashPilot Student",
       email: user.email,
       currency: "INR",
+      settings: {
+        allowance: 12000,
+        savingsGoal: 2500
+      },
       createdAt: serverTimestamp()
     },
     { merge: true }

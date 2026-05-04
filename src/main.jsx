@@ -15,9 +15,11 @@ import {
   Plus,
   ReceiptText,
   Search,
+  Settings as SettingsIcon,
   Sparkles,
   Target,
   Utensils,
+  User,
   Wallet,
   X
 } from "lucide-react";
@@ -57,31 +59,27 @@ function CashPilotApp() {
   const {
     transactions,
     summary,
+    profile,
     accounts,
     goals,
     loadingData,
     error: dataError,
     addTransaction,
-    deleteTransaction
+    deleteTransaction,
+    updateProfile,
+    updateSettings
   } = useData();
   const [screen, setScreen] = useState("home");
   const [aiOpen, setAiOpen] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [settings, setSettings] = useState(() => {
-    const saved = window.localStorage.getItem("cashpilot-student-settings");
-    return saved ? JSON.parse(saved) : { allowance: 12000, savingsGoal: 2500 };
-  });
-
-  useEffect(() => {
-    window.localStorage.setItem("cashpilot-student-settings", JSON.stringify(settings));
-  }, [settings]);
+  const settings = profile.settings;
 
   const expenses = useMemo(() => transactions.map(transactionToExpense), [transactions]);
 
   const totals = useMemo(() => {
     const spent = expenses.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-    const allowance = summary.totalIncome || settings.allowance;
+    const allowance = settings.allowance;
     const left = allowance - spent;
     const todaySpent = expenses
       .filter((item) => item.date === today())
@@ -106,7 +104,7 @@ function CashPilotApp() {
       dailyLimit: Math.max(0, Math.floor(left / 28)),
       savingsProgress: Math.min(100, Math.max(0, ((left > 0 ? left : 0) / settings.savingsGoal) * 100))
     };
-  }, [expenses, settings, summary]);
+  }, [expenses, settings]);
 
   const addExpense = async (expense) => {
     await addTransaction({
@@ -153,7 +151,7 @@ function CashPilotApp() {
             <HomeScreen
               expenses={expenses}
               totals={totals}
-              settings={{ ...settings, allowance: summary.totalIncome || settings.allowance }}
+              settings={settings}
               goals={goals}
               aiOpen={aiOpen}
               onDismissAi={() => setAiOpen(false)}
@@ -171,9 +169,18 @@ function CashPilotApp() {
               onAdd={() => setScreen("add")}
             />
           )}
-          {screen === "budget" && <BudgetScreen settings={settings} setSettings={setSettings} totals={totals} />}
+          {screen === "budget" && <BudgetScreen settings={settings} updateSettings={updateSettings} totals={totals} />}
           {screen === "calendar" && <CalendarScreen expenses={expenses} totals={totals} onAdd={() => setScreen("add")} />}
           {screen === "inbox" && <InboxScreen totals={totals} onBudget={() => setScreen("budget")} />}
+          {screen === "settings" && (
+            <SettingsScreen
+              profile={profile}
+              settings={settings}
+              updateProfile={updateProfile}
+              updateSettings={updateSettings}
+              onLogout={logOut}
+            />
+          )}
         </div>
         <BottomTabs active={screen} setScreen={setScreen} />
       </section>
@@ -200,7 +207,8 @@ const navItems = [
   { id: "records", icon: Search, label: "Records" },
   { id: "add", icon: Plus, label: "Add" },
   { id: "calendar", icon: CalendarDays, label: "Calendar" },
-  { id: "budget", icon: ArrowRightLeft, label: "Budget" }
+  { id: "budget", icon: ArrowRightLeft, label: "Budget" },
+  { id: "settings", icon: SettingsIcon, label: "Settings" }
 ];
 
 function Sidebar({ active, setScreen, totals }) {
@@ -241,7 +249,8 @@ function DesktopHeader({ screen, setScreen, onLogout }) {
     records: "Daily records",
     budget: "Monthly budget",
     calendar: "Expense calendar",
-    inbox: "Smart nudges"
+    inbox: "Smart nudges",
+    settings: "User settings"
   };
 
   return (
@@ -257,6 +266,9 @@ function DesktopHeader({ screen, setScreen, onLogout }) {
         </button>
         <button className="icon-ring pressable" aria-label="Notifications" onClick={() => setScreen("inbox")}>
           <Bell size={19} />
+        </button>
+        <button className="icon-ring pressable" aria-label="Settings" onClick={() => setScreen("settings")}>
+          <SettingsIcon size={18} />
         </button>
         <button className="primary-button compact pressable" onClick={() => setScreen("add")}>
           <Plus size={17} />
@@ -394,7 +406,7 @@ function HomeScreen({ expenses, totals, settings, goals, aiOpen, onDismissAi, on
       <section className="balance-block">
         <p className="eyebrow">Monthly money left <span>·</span> Student wallet</p>
         <h1>{currency(totals.left)}</h1>
-        <AreaChart />
+        <AreaChart totals={totals} allowance={settings.allowance} />
       </section>
 
       <div className="stat-row">
@@ -438,7 +450,36 @@ function HomeScreen({ expenses, totals, settings, goals, aiOpen, onDismissAi, on
   );
 }
 
-function AreaChart() {
+function AreaChart({ totals, allowance }) {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const todayDate = now.getDate();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const width = 340;
+  const height = 165;
+  const topPadding = 14;
+  const bottomPadding = 26;
+  const chartHeight = height - topPadding - bottomPadding;
+  const monthlyMoney = Math.max(Number(allowance || 0), totals.spent, 1);
+  let remaining = monthlyMoney;
+
+  const points = Array.from({ length: daysInMonth }, (_, index) => {
+    const day = index + 1;
+    const dateKey = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    if (day <= todayDate) {
+      remaining -= Number(totals.byDate[dateKey] || 0);
+    }
+    const projectedRemaining = day > todayDate ? totals.left : remaining;
+    const x = daysInMonth === 1 ? 0 : (index / (daysInMonth - 1)) * width;
+    const y = topPadding + (1 - Math.max(0, projectedRemaining) / monthlyMoney) * chartHeight;
+    return { x, y };
+  });
+
+  const linePath = points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
+  const areaPath = `${linePath} L${width} ${height} L0 ${height} Z`;
+  const spentY = topPadding + (totals.spent / monthlyMoney) * chartHeight;
+
   return (
     <svg className="area-chart" viewBox="0 0 340 165" preserveAspectRatio="none" aria-hidden="true">
       <defs>
@@ -448,14 +489,9 @@ function AreaChart() {
           <stop offset="100%" stopColor="#0d0d0d" stopOpacity="0" />
         </linearGradient>
       </defs>
-      <path
-        className="chart-line"
-        d="M0 90 C22 80 28 102 48 92 C70 80 72 65 96 70 C122 76 122 42 150 52 C178 62 190 26 215 34 C240 44 246 82 270 74 C296 66 306 98 340 86"
-      />
-      <path
-        d="M0 90 C22 80 28 102 48 92 C70 80 72 65 96 70 C122 76 122 42 150 52 C178 62 190 26 215 34 C240 44 246 82 270 74 C296 66 306 98 340 86 L340 165 L0 165 Z"
-        fill="url(#chartFill)"
-      />
+      <path d={areaPath} fill="url(#chartFill)" />
+      <line className="chart-baseline" x1="0" x2={width} y1={spentY} y2={spentY} />
+      <path className="chart-line" d={linePath} />
     </svg>
   );
 }
@@ -679,9 +715,9 @@ function ExpenseRow({ expense, onDelete }) {
   );
 }
 
-function BudgetScreen({ settings, setSettings, totals }) {
+function BudgetScreen({ settings, updateSettings, totals }) {
   const update = (key, value) => {
-    setSettings((current) => ({ ...current, [key]: Number(value.replace(/[^0-9]/g, "")) || 0 }));
+    updateSettings({ ...settings, [key]: Number(value.replace(/[^0-9]/g, "")) || 0 });
   };
 
   return (
@@ -726,6 +762,88 @@ function BudgetScreen({ settings, setSettings, totals }) {
           <span style={{ width: `${totals.savingsProgress}%` }} />
         </div>
       </section>
+    </div>
+  );
+}
+
+function SettingsScreen({ profile, settings, updateProfile, updateSettings, onLogout }) {
+  const [form, setForm] = useState({
+    name: profile.name || "",
+    allowance: String(settings.allowance || 0),
+    savingsGoal: String(settings.savingsGoal || 0)
+  });
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    setForm({
+      name: profile.name || "",
+      allowance: String(settings.allowance || 0),
+      savingsGoal: String(settings.savingsGoal || 0)
+    });
+  }, [profile.name, settings.allowance, settings.savingsGoal]);
+
+  const save = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setMessage("");
+    try {
+      await updateProfile({ name: form.name.trim() || "CashPilot Student", currency: profile.currency || "INR" });
+      await updateSettings({
+        allowance: Number(form.allowance.replace(/[^0-9]/g, "")) || 0,
+        savingsGoal: Number(form.savingsGoal.replace(/[^0-9]/g, "")) || 0
+      });
+      setMessage("Settings saved to your account.");
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="page settings-page">
+      <section className="hero-copy utility-hero">
+        <h1>User details<br /><span>and settings</span></h1>
+        <p>Your monthly budget, savings target, and profile details are saved with this account.</p>
+      </section>
+
+      <form className="expense-form settings-form" onSubmit={save}>
+        <label>
+          <span>Name</span>
+          <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Your name" />
+        </label>
+        <label>
+          <span>Email</span>
+          <input value={profile.email || ""} readOnly />
+        </label>
+        <label>
+          <span>Monthly budget</span>
+          <input inputMode="numeric" value={form.allowance} onChange={(event) => setForm({ ...form, allowance: event.target.value })} />
+        </label>
+        <label>
+          <span>Savings goal</span>
+          <input inputMode="numeric" value={form.savingsGoal} onChange={(event) => setForm({ ...form, savingsGoal: event.target.value })} />
+        </label>
+        <section className="detail-card settings-summary">
+          <p>Current month</p>
+          <strong>{currency(settings.allowance)}</strong>
+          <small>{currency(settings.savingsGoal)} savings target</small>
+        </section>
+        <section className="detail-card">
+          <p>Signed in as</p>
+          <div className="user-chip">
+            <User size={18} />
+            <span>{profile.name || "CashPilot Student"}</span>
+          </div>
+          <small>{profile.email}</small>
+        </section>
+        <div className="form-actions">
+          <button className="primary-button pressable" type="submit" disabled={saving}>{saving ? "Saving..." : "Save settings"}</button>
+          <button className="outline-pill pressable" type="button" onClick={onLogout}>Sign out</button>
+        </div>
+        {message && <p className="form-error success-message">{message}</p>}
+      </form>
     </div>
   );
 }

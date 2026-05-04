@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { AuthContext } from "./AuthContext";
 import { createAccount, deleteAccount as deleteAccountDoc, getAccounts, updateAccount as updateAccountDoc } from "../firebase/services/accounts";
 import { createGoal, deleteGoal as deleteGoalDoc, getGoals, updateGoal as updateGoalDoc } from "../firebase/services/goals";
+import { defaultProfile, ensureProfile, getProfile, updateProfile as updateProfileDoc, updateSettings as updateSettingsDoc } from "../firebase/services/profile";
 import { addTransaction as addTransactionDoc, deleteTransaction as deleteTransactionDoc, getTransactions } from "../firebase/services/transactions";
 import { getSummary } from "../firebase/services/summary";
 import { friendlyError } from "../firebase/errors";
@@ -15,10 +16,19 @@ const defaultSummary = {
   totalSaved: 0
 };
 
+function getSavedSettings() {
+  try {
+    return JSON.parse(window.localStorage.getItem("cashpilot-student-settings") || "null");
+  } catch {
+    return null;
+  }
+}
+
 export function DataProvider({ children }) {
   const { user } = useContext(AuthContext);
   const [accounts, setAccounts] = useState([]);
   const [goals, setGoals] = useState([]);
+  const [profile, setProfile] = useState(defaultProfile);
   const [transactions, setTransactions] = useState([]);
   const [summary, setSummary] = useState(defaultSummary);
   const [loadingData, setLoadingData] = useState(false);
@@ -28,6 +38,7 @@ export function DataProvider({ children }) {
     if (!user) {
       setAccounts([]);
       setGoals([]);
+      setProfile(defaultProfile);
       setTransactions([]);
       setSummary(defaultSummary);
       setLoadingData(false);
@@ -36,6 +47,11 @@ export function DataProvider({ children }) {
 
     setLoadingData(true);
     setError("");
+    const savedSettings = getSavedSettings();
+    ensureProfile(user, savedSettings).catch((err) => {
+      setError(friendlyError(err));
+      setLoadingData(false);
+    });
 
     const handleError = (err) => {
       setError(friendlyError(err));
@@ -43,6 +59,7 @@ export function DataProvider({ children }) {
     };
 
     const unsubscribers = [
+      getProfile(user.uid, setProfile, handleError),
       getAccounts(user.uid, setAccounts, handleError),
       getGoals(user.uid, setGoals, handleError),
       getSummary(user.uid, setSummary, handleError),
@@ -71,6 +88,7 @@ export function DataProvider({ children }) {
     () => ({
       accounts,
       goals,
+      profile,
       summary,
       transactions,
       loadingData,
@@ -81,12 +99,13 @@ export function DataProvider({ children }) {
       addGoal: (goalData) => withUser((userId) => createGoal(userId, goalData)),
       updateGoal: (goalId, updates) => withUser((userId) => updateGoalDoc(userId, goalId, updates)),
       deleteGoal: (goalId) => withUser((userId) => deleteGoalDoc(userId, goalId)),
+      updateProfile: (updates) => withUser((userId) => updateProfileDoc(userId, updates)),
+      updateSettings: (settings) => withUser((userId) => updateSettingsDoc(userId, settings)),
       addTransaction: (txData) => withUser((userId) => addTransactionDoc(userId, txData)),
       deleteTransaction: (txId) => withUser((userId) => deleteTransactionDoc(userId, txId))
     }),
-    [accounts, goals, summary, transactions, loadingData, error, user]
+    [accounts, goals, profile, summary, transactions, loadingData, error, user]
   );
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
 }
-
